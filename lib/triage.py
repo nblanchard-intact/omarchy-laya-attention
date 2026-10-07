@@ -12,7 +12,8 @@ A notification is closed through the standard D-Bus interface when it is
 neither important nor personal/actionable/otp — routine progress and job
 status never interrupt, everything else passes through untouched.
 
-Decisions append to ~/.local/state/laya-attention/triage.jsonl.
+Only suppression actions append to ~/.local/state/laya-attention/triage.jsonl;
+kept personal messages and OTPs are deliberately not retained.
 """
 
 from __future__ import annotations
@@ -55,9 +56,16 @@ PASS_KINDS = {"personal", "error", "reminder", "otp"}
 PIDFILE = os.path.join(STATE_DIR, "triage.pid")
 
 
+def ensure_private_state_dir() -> None:
+    """Keep plugin state inaccessible to other local users."""
+    os.makedirs(STATE_DIR, mode=0o700, exist_ok=True)
+    os.chmod(STATE_DIR, 0o700)
+
+
 def write_pidfile() -> None:
-    os.makedirs(STATE_DIR, exist_ok=True)
+    ensure_private_state_dir()
     with open(PIDFILE, "w") as f:
+        os.chmod(PIDFILE, 0o600)
         f.write(str(os.getpid()))
 
 
@@ -90,8 +98,9 @@ def classify(app: str, summary: str, body: str) -> tuple[str, float]:
 
 
 def append_decision(entry: dict) -> None:
-    os.makedirs(STATE_DIR, exist_ok=True)
+    ensure_private_state_dir()
     with open(TRIAGE_LOG, "a") as f:
+        os.chmod(TRIAGE_LOG, 0o600)
         f.write(json.dumps(entry) + "\n")
 
 
@@ -136,14 +145,18 @@ def triage_file(path: str, threshold: float) -> None:
     # progress/info are suppressed when the classifier is confident.
     suppress = kind not in PASS_KINDS and kind_prob >= threshold
 
-    append_decision({
-        "ts": time.time(), "file": os.path.basename(path), "dbus_id": dbus_id,
-        "app": app, "summary": summary,
-        "kind": kind, "kind_prob": round(kind_prob, 4),
-        "action": "suppressed" if suppress else "kept",
-    })
-    if suppress and isinstance(dbus_id, int) and dbus_id > 0:
-        close_notification(dbus_id)
+    if suppress:
+        # Kept notifications may contain personal messages or OTPs. They are
+        # intentionally not written to disk; the log is only an audit trail
+        # for notifications this plugin actively suppressed.
+        append_decision({
+            "ts": time.time(), "file": os.path.basename(path), "dbus_id": dbus_id,
+            "app": app, "summary": summary,
+            "kind": kind, "kind_prob": round(kind_prob, 4),
+            "action": "suppressed",
+        })
+        if isinstance(dbus_id, int) and dbus_id > 0:
+            close_notification(dbus_id)
         log(f"suppressed: {app} — {summary} ({kind} {kind_prob:.2f})")
 
 
@@ -157,6 +170,7 @@ def main() -> int:
         except (IndexError, ValueError):
             pass
 
+    ensure_private_state_dir()
     kill_stale()
     write_pidfile()
     os.makedirs(POPUP_DIR, exist_ok=True)
