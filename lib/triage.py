@@ -18,6 +18,7 @@ kept personal messages and OTPs are deliberately not retained.
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import subprocess
@@ -28,6 +29,7 @@ import urllib.request
 HOME = os.path.expanduser("~")
 STATE_DIR = os.path.join(os.environ.get("XDG_STATE_HOME", os.path.join(HOME, ".local/state")), "laya-attention")
 TRIAGE_LOG = os.path.join(STATE_DIR, "triage.jsonl")
+HISTORY_LOG = os.path.join(STATE_DIR, "history.jsonl")
 POPUP_DIR = os.path.join(os.environ.get("XDG_STATE_HOME", os.path.join(HOME, ".local/state")), "omarchy/notifications")
 LAYA_URL = os.environ.get("LAYA_URL", "http://127.0.0.1:8000/v1/systemone")
 
@@ -54,6 +56,7 @@ PASS_KINDS = {"personal", "error", "reminder", "otp"}
 
 
 PIDFILE = os.path.join(STATE_DIR, "triage.pid")
+LOCKFILE = os.path.join(STATE_DIR, "triage.lock")
 
 
 def ensure_private_state_dir() -> None:
@@ -81,6 +84,25 @@ def kill_stale() -> None:
         pass
 
 
+def acquire_lock() -> int | None:
+    """Take an exclusive flock so at most one watcher survives a restart race.
+
+    kill_stale() + pidfile leaves a window where an old watcher is still
+    exiting while a new one starts — that is how three watchers piled up.
+    Returns the lock file object (keep open for the process lifetime) or
+    None if another watcher holds the lock.
+    """
+    ensure_private_state_dir()
+    f = open(LOCKFILE, "w")
+    os.chmod(LOCKFILE, 0o600)
+    try:
+        fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        f.close()
+        return None
+    return f
+
+
 def log(msg: str) -> None:
     print(msg, file=sys.stderr, flush=True)
 
@@ -101,6 +123,20 @@ def append_decision(entry: dict) -> None:
     ensure_private_state_dir()
     with open(TRIAGE_LOG, "a") as f:
         os.chmod(TRIAGE_LOG, 0o600)
+        f.write(json.dumps(entry) + "\n")
+
+
+def append_history(entry: dict) -> None:
+    """Append to the searchable notification history.
+
+    Privacy: suppressed notifications are routine noise by definition, so
+    their summary is retained. Kept notifications may hold personal messages
+    or OTPs — only the app name and a coarse action are recorded for those,
+    never the summary or body.
+    """
+    ensure_private_state_dir()
+    with open(HISTORY_LOG, "a") as f:
+        os.chmod(HISTORY_LOG, 0o600)
         f.write(json.dumps(entry) + "\n")
 
 
@@ -159,6 +195,17 @@ def triage_file(path: str, threshold: float) -> None:
             close_notification(dbus_id)
         log(f"suppressed: {app} — {summary} ({kind} {kind_prob:.2f})")
 
+    append_history({
+        "ts": time.time(),
+        "app": app,
+        # Summary only for suppressed noise; kept notifications may hold
+        # personal messages or OTPs.
+        "summary": summary if suppress else "",
+        "kind": kind,
+        "kind_prob": round(kind_prob, 4),
+        "action": "suppressed" if suppress else "kept",
+    })
+
 
 def main() -> int:
     threshold = THRESHOLD
@@ -172,6 +219,10 @@ def main() -> int:
 
     ensure_private_state_dir()
     kill_stale()
+    lock = acquire_lock()
+    if lock is None:
+        log("another watcher holds the lock; exiting")
+        return 0
     write_pidfile()
     os.makedirs(POPUP_DIR, exist_ok=True)
     log(f"watching {POPUP_DIR} (threshold {threshold})")

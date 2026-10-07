@@ -71,10 +71,15 @@ Click the bar dot to open it. Everything the plugin knows is on one screen:
 
 - **Agents** — every agent herdr tracks, with its last decision
   (`kind · probability · action`)
+- **Notification history** — every notification the watcher saw, grouped by
+  app + summary so repeats collapse into one row with a `×N` counter;
+  kept personal notifications show app + kind only
 - **Controls**:
   - *Suppress notifications at* — the triage confidence threshold (50–95%)
   - *Triage enabled* — master switch for suppression; the agent watcher
     keeps running
+  - *Focus guard* — master switch for focus-steal suppression; shows
+    "lifted" while a flagged agent's grace window is open
   - *Agent attention at* — the agent-attention threshold (30–95%)
   - *Poll now* — run an agent-watch cycle immediately
   - *Refresh* — re-read the state files
@@ -93,7 +98,10 @@ threshold; agent polls pick it up on the next cycle) and persist to
 3. `POST /v1/systemone` on the local laya server → classify
    `done / failed / waiting / progress / noise`
 4. If the kind is `done`, `failed`, or `waiting` at ≥ the attention
-   threshold → `herdr notification show "Agent needs attention"`
+   threshold → `herdr notification show "Agent needs attention"`, and the
+   **focus guard is lifted** for 90 s so the pane's own urgency request
+   can pull you there
+5. Any poll with nothing flagged → the guard re-arms
 
 **Notification triage** — a resident watcher on the Omarchy shell's live
 notification popups:
@@ -106,13 +114,34 @@ notification popups:
    retract its own notification, so nothing is muted at the bus level and
    senders get their normal closed callback
 
+## Focus guard
+
+`misc:focus_on_activate = true` (the Omarchy default) means any window
+requesting activation takes focus. Terminals and TUI agents ring BEL on
+routine output; with `bell.urgent` enabled programmatically (or enabled by
+apps via `CSI ? 1042 h`), each ring yanks focus mid-keystroke.
+
+The guard installs a runtime Hyprland rule (`focus_on_activate = false` on
+the terminal class) through `hyprctl eval` — the same mechanism the
+hot-apps plugin uses for its window rules. While armed, urgency rings
+never steal focus. When an agent genuinely flags (`done` / `failed` /
+`waiting` ≥ threshold), the guard lifts for `focusGuardGraceMs` so the
+real "come look" still reaches you, then re-arms.
+
+Toggle it from the panel (*Focus guard* switch) or set
+`"focusGuardEnabled": false` in `shell.json`.
+
 Agent decisions and notification-suppression actions are appended to private
 JSONL logs under `~/.local/state/laya-attention/` (directory mode `0700`,
-files mode `0600`). Notifications that are kept — including personal messages
-and OTPs — are never persisted by this plugin:
+files mode `0600`). The **history log** (`history.jsonl`) records every
+notification the watcher sees so the panel can list it: suppressed
+notifications keep their summary (they are routine noise by definition),
+while kept notifications — including personal messages and OTPs — are
+recorded as app name and classification only, never their text:
 
 ```json
 {"app": "docker", "summary": "Pulling layers 43%", "kind": "progress", "kind_prob": 0.83, "action": "suppressed"}
+{"app": "Messenger", "summary": "", "kind": "personal", "kind_prob": 0.85, "action": "kept"}
 ```
 
 ## Configuration
@@ -127,7 +156,9 @@ if you prefer:
   "intervalMs": 10000,
   "threshold": 0.45,
   "triageEnabled": true,
-  "triageThreshold": 0.6
+  "triageThreshold": 0.6,
+  "focusGuardEnabled": true,
+  "focusGuardGraceMs": 90000
 }
 ```
 
@@ -137,6 +168,8 @@ if you prefer:
 | `threshold` | `0.45` | Minimum kind probability to fire an agent notification |
 | `triageEnabled` | `true` | Master switch for notification suppression |
 | `triageThreshold` | `0.6` | Minimum kind probability to close a notification |
+| `focusGuardEnabled` | `true` | Suppress `focus_on_activate` steals from terminal windows |
+| `focusGuardGraceMs` | `90000` | How long the guard stays lifted after a flagged agent event |
 
 Thresholds are calibrated against the shipped checkpoints' observed
 separation — agent attention: progress/noise ≤ 0.42 vs done ≥ 0.51 and

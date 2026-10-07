@@ -2,9 +2,9 @@
   "schemaVersion": 1,
   "id": "cheapseatsecon.laya-attention",
   "name": "Laya Attention",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": "cheapseatsecon",
-  "description": "Watches AI agent panes (herdr) and uses the locally running Laya decision server to decide which agent completions deserve a notification. Low-confidence or trivial completions stay silent.",
+  "description": "Watches AI agent panes (herdr) and desktop notifications through the local Laya decision server: notifies only when an agent finishes, fails, or waits; closes routine notification noise; keeps a grouped notification history; and guards focus against routine focus_on_activate steals.",
   "kinds": ["service", "bar-widget"],
   "keepLoaded": true,
   "entryPoints": {

@@ -42,6 +42,8 @@ Item {
   readonly property real threshold: settings.threshold !== undefined ? Number(settings.threshold) : 0.45
   readonly property bool triageEnabled: settings.triageEnabled !== undefined ? !!settings.triageEnabled : true
   readonly property real triageThreshold: settings.triageThreshold !== undefined ? Number(settings.triageThreshold) : 0.6
+  readonly property bool focusGuardEnabled: settings.focusGuardEnabled !== undefined ? !!settings.focusGuardEnabled : true
+  readonly property int focusGuardGraceMs: (settings.focusGuardGraceMs | 0) || 90000
 
   function parseSettings(raw) {
     var cfg = null
@@ -78,6 +80,7 @@ Item {
     pollTimer.interval = service.intervalMs
     if (service.triageEnabled !== prevTriage || service.triageThreshold !== prevThreshold)
       applyTriageSettings()
+    syncFocusGuard()
   }
 
   // ------------------------------------------------------------- state
@@ -93,6 +96,19 @@ Item {
   // Triage (desktop notification suppression)
   property int triageSuppressed: 0
   property string lastTriage: ""
+
+  // Focus guard (suppress focus_on_activate steals from agent panes).
+  //
+  // The steal vector: foot sets the urgency hint on BEL (routine TUI
+  // chatter), and misc:focus_on_activate=true makes Hyprland focus the
+  // window on its activation request — mid-keystroke. The guard installs a
+  // runtime window rule (focus_on_activate=false, class=foot) that is
+  // DISABLED by default... inverted: the RULE is enabled while the guard is
+  // armed (steals denied), and temporarily lifted for graceMs whenever an
+  // agent genuinely needs attention, so a "come look" urgency still works.
+  property bool guardArmed: false
+  property string guardRuleName: ""
+  property var guardEvalQueue: []
 
   // The triage watcher is a resident child: inotify on the notification
   // popup dir, classify each new popup through laya, close it via D-Bus
@@ -143,6 +159,77 @@ Item {
     }
   }
 
+  // ------------------------------------------------------------- focus guard
+
+  // Config-table changes (hl.window_rule / set_enabled) go through
+  // `hyprctl eval`; `hl.dispatch` wraps returns and would reject or swallow
+  // these (same constraint the hot-apps plugin documents).
+  Process {
+    id: guardEvalProc
+    stdout: StdioCollector { waitForEnd: true }
+    onExited: service.runNextGuardEval()
+  }
+
+  function runNextGuardEval() {
+    if (guardEvalProc.running || service.guardEvalQueue.length === 0) return
+    var lua = service.guardEvalQueue[0]
+    service.guardEvalQueue = service.guardEvalQueue.slice(1)
+    guardEvalProc.command = ["hyprctl", "eval", lua]
+    guardEvalProc.running = true
+  }
+
+  function queueGuardEval(lua) {
+    service.guardEvalQueue = service.guardEvalQueue.concat([lua])
+    service.runNextGuardEval()
+  }
+
+  // Install (once) and arm/disarm the runtime rule. The rule name is stable
+  // across toggles so re-arming never duplicates it.
+  function syncFocusGuard() {
+    if (!service.focusGuardEnabled) {
+      disarmFocusGuard()
+      return
+    }
+    var lua = "_G.__layaFocusGuard = _G.__layaFocusGuard or "
+      + "hl.window_rule({ name = 'laya-focus-guard', match = { class = 'foot' }, "
+      + "focus_on_activate = false }); "
+      + "_G.__layaFocusGuard:set_enabled(" + (service.guardArmed ? "true" : "false") + ")"
+    service.queueGuardEval(lua)
+  }
+
+  function disarmFocusGuard() {
+    service.guardArmed = false
+    var lua = "if _G.__layaFocusGuard then _G.__layaFocusGuard:set_enabled(false) end"
+    service.queueGuardEval(lua)
+  }
+
+  // Called after each poll. A flagged agent lifts the guard for graceMs;
+  // routine-only results re-arm it immediately (idempotent writes).
+  function updateFocusGuard(flagged) {
+    if (!service.focusGuardEnabled) return
+    if (flagged) {
+      if (service.guardArmed) {
+        service.guardArmed = false
+        service.syncFocusGuard()
+      }
+      guardGraceTimer.restart()
+    } else if (!service.guardArmed && !guardGraceTimer.running) {
+      service.guardArmed = true
+      service.syncFocusGuard()
+    }
+  }
+
+  Timer {
+    id: guardGraceTimer
+    interval: service.focusGuardGraceMs
+    onTriggered: {
+      if (service.focusGuardEnabled && !service.guardArmed) {
+        service.guardArmed = true
+        service.syncFocusGuard()
+      }
+    }
+  }
+
   // -------------------------------------------------- settings persistence
 
   property var persistQueue: []
@@ -157,6 +244,10 @@ Item {
     service.settings = next
     if (key === "intervalMs") pollTimer.interval = service.intervalMs
     if (key === "triageEnabled" || key === "triageThreshold") applyTriageSettings()
+    if (key === "focusGuardEnabled") {
+      service.guardArmed = !!value
+      syncFocusGuard()
+    }
   }
 
   function persistSetting(patch) {
@@ -173,7 +264,8 @@ Item {
     var snapshot = JSON.stringify({
       threshold: service.threshold,
       triageEnabled: service.triageEnabled,
-      triageThreshold: service.triageThreshold
+      triageThreshold: service.triageThreshold,
+      focusGuardEnabled: service.focusGuardEnabled
     })
     service.persistQueue = service.persistQueue.concat([snapshot])
     service.persistNextSettings()
@@ -209,16 +301,19 @@ Item {
     stdout: StdioCollector { id: pollOut; waitForEnd: true }
     onExited: function (code) {
       service.pollRunning = false
+      var flagged = false
       if (code === 0) {
         try {
           var d = JSON.parse(pollOut.text.trim() || "{}")
           service.lastTransitions = d.transitions | 0
           service.lastNotified = d.notified | 0
+          flagged = (d.notified | 0) > 0
           var n = 0
           for (var k in d.agents || {}) n++
           service.agentCount = n
         } catch (e) {}
       }
+      service.updateFocusGuard(flagged)
       service.checkLaya()
       pollTimer.restart()
     }
@@ -296,6 +391,8 @@ Item {
 
   Component.onCompleted: {
     shellFile.reload()
+    service.guardArmed = service.focusGuardEnabled
+    syncFocusGuard()
     poll()
     startTriage()
   }
