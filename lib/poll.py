@@ -15,6 +15,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.request
 
@@ -73,17 +74,33 @@ def load_state() -> dict:
         return {}
 
 
+def ensure_private_state_dir() -> None:
+    """Keep plugin state inaccessible to other local users.
+
+    Explicitly correct an existing directory too: os.makedirs() applies its
+    mode only when it creates the directory, and users commonly have umask
+    022.
+    """
+    os.makedirs(STATE_DIR, mode=0o700, exist_ok=True)
+    os.chmod(STATE_DIR, 0o700)
+
+
 def save_state(state: dict) -> None:
-    os.makedirs(STATE_DIR, exist_ok=True)
-    tmp = AGENTS_STATE + ".tmp"
-    with open(tmp, "w") as f:
+    ensure_private_state_dir()
+    fd, tmp = tempfile.mkstemp(prefix=".agents.", dir=STATE_DIR, text=True)
+    os.fchmod(fd, 0o600)
+    with os.fdopen(fd, "w") as f:
         json.dump(state, f, indent=1)
     os.replace(tmp, AGENTS_STATE)
+    os.chmod(AGENTS_STATE, 0o600)
 
 
 def append_decision(entry: dict) -> None:
-    os.makedirs(STATE_DIR, exist_ok=True)
+    ensure_private_state_dir()
     with open(DECISIONS_LOG, "a") as f:
+        # The directory is already private; make the file private as well so
+        # it stays protected if it is later moved or the directory mode drifts.
+        os.chmod(DECISIONS_LOG, 0o600)
         f.write(json.dumps(entry) + "\n")
 
 
@@ -126,6 +143,7 @@ def main() -> int:
             threshold = float(args[i + 1])
         except (IndexError, ValueError):
             pass
+    ensure_private_state_dir()
     prev = load_state()
     agents = herdr_agents()
 

@@ -106,8 +106,10 @@ notification popups:
    retract its own notification, so nothing is muted at the bus level and
    senders get their normal closed callback
 
-Every verdict on either job is appended to a JSONL log under
-`~/.local/state/laya-attention/`:
+Agent decisions and notification-suppression actions are appended to private
+JSONL logs under `~/.local/state/laya-attention/` (directory mode `0700`,
+files mode `0600`). Notifications that are kept — including personal messages
+and OTPs — are never persisted by this plugin:
 
 ```json
 {"app": "docker", "summary": "Pulling layers 43%", "kind": "progress", "kind_prob": 0.83, "action": "suppressed"}
