@@ -1,0 +1,83 @@
+#!/bin/bash
+# omarchy:summary=Inspect and tune the Laya Attention agent watcher
+# omarchy:args=[status|poll|test <text>|config]
+# omarchy:examples=omarchy-laya-attention status
+
+set -euo pipefail
+
+PLUGIN_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+PYTHON="${PYTHON:-$PLUGIN_DIR/../.venv/bin/python}"
+command -v "$PYTHON" >/dev/null 2>&1 || PYTHON=python3
+export LAYA_URL="${LAYA_URL:-http://127.0.0.1:8000/v1/systemone}"
+
+usage() {
+  cat <<'EOF'
+Usage: omarchy-laya-attention <command> [args]
+
+Commands:
+  status          Show watcher state: tracked agents and recent decisions
+  poll            Run one poll cycle now (what the service runs on its timer)
+  test <text>     Classify arbitrary agent output through laya and print the decision
+  config          Print the plugin's settings from shell.json
+EOF
+  exit 0
+}
+
+classify_test() {
+  "$PYTHON" - "$1" "$LAYA_URL" <<'PYEOF'
+import json, sys, urllib.request
+text, url = sys.argv[1], sys.argv[2]
+body = json.dumps({
+    "state": text[-4000:],
+    "questions": {
+        "kind": {
+            "type": "choice",
+            "instructions": "What does this AI agent terminal output represent?",
+            "criteria": {
+                "waiting": "the agent is asking the human a question or waiting for input",
+                "failed": "the agent hit an error, crash, or failed the task",
+                "done": "the agent completed the requested work",
+                "progress": "routine progress, tool output, or the agent still working",
+                "noise": "spinner, status line, banner, or empty content"
+            }
+        }
+    }
+}).encode()
+req = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"})
+d = json.load(urllib.request.urlopen(req, timeout=8))
+a = d["answers"]["kind"]
+print(f"kind: {a['choice']} (top {a['probabilities'][a['choice']]:.4f})")
+PYEOF
+}
+
+cmd="${1:-}"
+case "$cmd" in
+  status)
+    echo "laya url: $LAYA_URL"
+    echo "agents:"
+    cat "${XDG_STATE_HOME:-$HOME/.local/state}/laya-attention/agents.json" 2>/dev/null || echo "  (no state yet — run: $0 poll)"
+    echo "recent decisions:"
+    tail -10 "${XDG_STATE_HOME:-$HOME/.local/state}/laya-attention/decisions.jsonl" 2>/dev/null || echo "  (none)"
+    ;;
+  poll)
+    exec "$PYTHON" "$PLUGIN_DIR/lib/poll.py"
+    ;;
+  test)
+    shift
+    [[ -n ${1:-} ]] || usage
+    classify_test "$*"
+    ;;
+  config)
+    python3 - "cheapseatsecon.laya-attention" <<'PYEOF'
+import json, sys, os
+pid = sys.argv[1]
+cfg = json.load(open(os.path.expanduser("~/.config/omarchy/shell.json")))
+for p in cfg.get("plugins", []):
+    if p.get("id") == pid:
+        print(json.dumps(p, indent=2)); break
+else:
+    print("not configured")
+PYEOF
+    ;;
+  *) usage ;;
+esac

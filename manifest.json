@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "id": "cheapseatsecon.laya-attention",
+  "name": "Laya Attention",
+  "version": "0.1.0",
+  "author": "cheapseatsecon",
+  "description": "Watches AI agent panes (herdr) and uses the locally running Laya decision server to decide which agent completions deserve a notification. Low-confidence or trivial completions stay silent.",
+  "kinds": ["service", "bar-widget"],
+  "keepLoaded": true,
+  "entryPoints": {
+    "service": "Service.qml",
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Laya Attention",
+    "description": "A spark dot while agents are working; a filled dot when an agent finished and needs attention. Click to focus the agent pane.",
+    "category": "System",
+    "allowMultiple": false,
+    "defaultSection": "right"
+  }
+}
