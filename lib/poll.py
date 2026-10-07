@@ -192,7 +192,10 @@ def main() -> int:
         }
         append_decision(entry)
         if should:
-            notify("Agent needs attention", f"{info['title']} — {kind} ({top:.2f})")
+            # Do not put the terminal title in argv: process listings may be
+            # visible to other local users. The title remains available in the
+            # owner-only state files and panel.
+            notify("Agent needs attention", f"An agent is {kind} ({top:.2f})")
             notified += 1
 
     print(json.dumps({
