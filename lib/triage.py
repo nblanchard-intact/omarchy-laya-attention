@@ -21,6 +21,7 @@ from __future__ import annotations
 import fcntl
 import json
 import os
+import signal
 import subprocess
 import sys
 import time
@@ -73,12 +74,19 @@ def write_pidfile() -> None:
 
 
 def kill_stale() -> None:
-    """Terminate a previous watcher so only one runs (settings restarts)."""
+    """Terminate a previous watcher so only one runs (settings restarts).
+
+    Signals the whole process group: the old triage.py dies with its
+    inotifywait child, which would otherwise linger until its next event.
+    """
     try:
         with open(PIDFILE) as f:
             pid = int(f.read().strip())
         if pid != os.getpid():
-            os.kill(pid, 15)
+            try:
+                os.killpg(os.getpgid(pid), signal.SIGTERM)
+            except ProcessLookupError:
+                pass
             time.sleep(0.2)
     except Exception:
         pass
@@ -231,6 +239,7 @@ def main() -> int:
         ["inotifywait", "-m", "-q", "-e", "close_write,moved_to",
          "--format", "%w%f", POPUP_DIR],
         stdout=subprocess.PIPE, text=True,
+        start_new_session=True,
     )
     try:
         for line in proc.stdout:
@@ -243,7 +252,15 @@ def main() -> int:
                 continue  # triage disabled; keep the watcher alive
             triage_file(path, threshold)
     except KeyboardInterrupt:
+        pass
+    finally:
+        # inotifywait only writes on events, so it never notices a dead
+        # reader: without this, every replaced watcher leaks one process.
         proc.terminate()
+        try:
+            proc.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            proc.kill()
     return 0
 
 
