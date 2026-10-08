@@ -383,10 +383,11 @@ Panel {
         PanelSlider {
           id: triageSlider
           width: parent.width
-          minimum: 0.5
+          minimum: 0.3
           maximum: 0.95
           step: 0.05
           value: root.triageThreshold
+          onMoved: function (v) { root.triageThreshold = v }
           onReleased: function (v) { root.setSetting("triageThreshold", v) }
         }
       }
@@ -424,6 +425,7 @@ Panel {
           maximum: 0.95
           step: 0.05
           value: root.attentionThreshold
+          onMoved: function (v) { root.attentionThreshold = v }
           onReleased: function (v) { root.setSetting("threshold", v) }
         }
       }

@@ -125,18 +125,22 @@ Item {
   Timer {
     id: triageRestartTimer
     interval: 3000
-    onTriggered: service.startTriage()
+    onTriggered: {
+      // Only respawn when the process actually died — the running=false
+      // half of a restart also flips this property.
+      if (!triageProc.running) service.startTriage()
+    }
   }
 
   function startTriage() {
     if (!service.triageEnabled) return
+    if (triageProc.running) return
     triageProc.command = [
       service.python,
       service.pluginDir + "/lib/triage.py",
       "--threshold", String(service.triageThreshold)
     ]
     // triage.py kills any stale watcher from its pidfile on startup.
-    triageProc.running = false
     triageProc.running = true
   }
 
@@ -167,6 +171,7 @@ Item {
   Process {
     id: guardEvalProc
     stdout: StdioCollector { waitForEnd: true }
+    stderr: StdioCollector { onRead: function (line) { console.warn("laya-attention guard eval:", line) } }
     onExited: service.runNextGuardEval()
   }
 
@@ -174,7 +179,7 @@ Item {
     if (guardEvalProc.running || service.guardEvalQueue.length === 0) return
     var lua = service.guardEvalQueue[0]
     service.guardEvalQueue = service.guardEvalQueue.slice(1)
-    guardEvalProc.command = ["hyprctl", "eval", lua]
+    guardEvalProc.command = ["/usr/bin/hyprctl", "eval", lua]
     guardEvalProc.running = true
   }
 
