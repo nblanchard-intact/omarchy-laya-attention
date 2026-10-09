@@ -263,6 +263,7 @@ Panel {
               Text {
                 width: parent.width
                 text: agent.title || agentRow.modelData
+                textFormat: Text.PlainText
                 color: Color.popups.text
                 font.pixelSize: Style.font.body
                 elide: Text.ElideRight
@@ -272,6 +273,7 @@ Panel {
                 width: parent.width
                 text: dec ? (dec.kind + " · " + Number(dec.prob).toFixed(2) + " · " + dec.action)
                           : "no decision yet"
+                textFormat: Text.PlainText
                 color: Color.muted
                 font.pixelSize: Style.font.bodySmall
                 elide: Text.ElideRight
@@ -315,6 +317,7 @@ Panel {
                     ? historyRow.modelData.app + " — " + historyRow.modelData.summary
                     : historyRow.modelData.app + " · kept (" + historyRow.modelData.kind + ")"
                 + " · " + (historyRow.modelData.action === "suppressed" ? "suppressed" : "kept")
+              textFormat: Text.PlainText
               color: historyRow.modelData.action === "suppressed" ? Color.muted : Color.popups.text
               font.pixelSize: Style.font.bodySmall
               elide: Text.ElideRight
@@ -349,6 +352,7 @@ Panel {
         text: root.triageSuppressed > 0
           ? root.triageSuppressed + " suppressed - last: " + root.lastTriage
           : "no notifications suppressed yet"
+        textFormat: Text.PlainText
         color: Color.muted
         font.pixelSize: Style.font.bodySmall
         elide: Text.ElideRight
