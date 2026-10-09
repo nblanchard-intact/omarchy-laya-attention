@@ -1,7 +1,7 @@
 # Omarchy Laya Attention
 
 <p align="center">
-  <img src="public/laya-attention-hero.png" alt="Laya Attention — agent decisions in the bar, only the notifications that matter" width="100%">
+  <img src="preview.png" alt="Laya Attention — agent decisions in the bar, only the notifications that matter" width="100%">
 </p>
 
 A bar widget + service that decides **which notifications deserve you**, using
